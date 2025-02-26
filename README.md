@@ -6,3 +6,5 @@ To run this model, steps to run the compcogneuro simulations from https://github
 On windows, it is run in git bash. Once the file is dowloaded and unziped, in git bash (or the terminal for mac) cd where the FSA code is located (i.e., .../go/leabra/sims/chXYZ/fsa) and type the command "core run". The model should run from there!
 
 Currently there are the "easy" and "hard" tasks for the FSA model. The input represent the presented state at the time, and the output represents the prediction. The rest of the model architecture can be explained from the compcogneuro SIR model.
+
+The action is in the fsa.go and fsa_env.go files! The rest are for compiling and running
