@@ -211,12 +211,6 @@ type Config struct {
 	// can use 0 or -1 for no testing.
 	TestInterval int `default:"-1"`
 
-	// use difficult FSA
-	HardFSA bool `default:"false"`
-
-	// probability of repeating token
-	RepeatProb float32 `default:"0.5"`
-
 }
 
 // Sim encapsulates the entire simulation model, and we define all the
@@ -225,6 +219,13 @@ type Config struct {
 // as arguments to methods, and provides the core GUI interface (note the view tags
 // for the fields which provide hints to how things should be displayed).
 type Sim struct {
+
+	// HardFSA is a boolean -- use the hard FSA if true
+	HardFSA bool
+
+	// RepeatProb is the probability of repetition in the middle of
+	// the FSA generated sequence
+	RepeatProb float32
 
 	// BurstDaGain is the strength of dopamine bursts: 1 default -- reduce for PD OFF, increase for PD ON
 	BurstDaGain float32
@@ -282,6 +283,8 @@ func (ss *Sim) New() {
 func (ss *Sim) Defaults() {
 	ss.BurstDaGain = 1
 	ss.DipDaGain = 1
+	ss.HardFSA = false
+	ss.RepeatProb = 0.5
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -308,24 +311,20 @@ func (ss *Sim) ConfigEnv() {
 
 	// note: names must be standard here!
 	trn.Name = etime.Train.String()
+	// add two new tokens ...
+	// trn.SetNStim(7)
 	trn.SetNStim(9)
-	trn.SetHardFSA(false)
-	trn.InitTransProbs(0.5)
 	trn.RewVal = 1
 	trn.NoRewVal = 0
 	trn.Trial.Max = ss.Config.NTrials
-	trn.FSAHard = ss.Config.HardFSA
-	trn.FSARepeatProb = ss.Config.RepeatProb
 
 	tst.Name = etime.Test.String()
+	// add two new tokens ...
+	// tst.SetNStim(7)
 	tst.SetNStim(9)
-	tst.SetHardFSA(false)
-	tst.InitTransProbs(0.5)
 	tst.RewVal = 1
 	tst.NoRewVal = 0
 	tst.Trial.Max = ss.Config.NTrials
-	tst.FSAHard = ss.Config.HardFSA
-	tst.FSARepeatProb = ss.Config.RepeatProb
 
 	trn.Init(0)
 	tst.Init(0)
@@ -340,10 +339,12 @@ func (ss *Sim) ConfigNet(net *leabra.Network) {
 	rew, rp, da := net.AddRWLayers("", 2)
 	da.Name = "SNc"
 
+	// number of tokens from 7 to 9 ...
 	inp := net.AddLayer2D("Input", 1, 9, leabra.InputLayer)
 	// There is no control input in the FSA task ...
 	// ctrl := net.AddLayer2D("CtrlInput", 1, 3, leabra.InputLayer)
 	out := net.AddLayer2D("Output", 1, 9, leabra.TargetLayer)
+	// match size to output ...
 	hid := net.AddLayer2D("Hidden", 9, 9, leabra.SuperLayer)
 
 	// args: nY, nMaint, nOut, nNeurBgY, nNeurBgX, nNeurPfcY, nNeurPfcX
@@ -407,6 +408,9 @@ func (ss *Sim) ConfigNet(net *leabra.Network) {
 }
 
 func (ss *Sim) ApplyParams() {
+	var trn *FSAEnv
+	var tst *FSAEnv
+     
 	if ss.Loops != nil {
 		trn := ss.Loops.Stacks[etime.Train]
 		trn.Loops[etime.Run].Counter.Max = ss.Config.NRuns
@@ -414,6 +418,13 @@ func (ss *Sim) ApplyParams() {
 	}
 	ss.Params.SetAll()
 
+	trn = ss.Envs.ByMode(etime.Train).(*FSAEnv)
+	tst = ss.Envs.ByMode(etime.Test).(*FSAEnv)
+	trn.SetHardFSA(ss.HardFSA)
+	trn.InitTransProbs(ss.RepeatProb)
+	tst.SetHardFSA(ss.HardFSA)
+	tst.InitTransProbs(ss.RepeatProb)
+	
 	matg := ss.Net.LayerByName("MatrixGo")
 	matn := ss.Net.LayerByName("MatrixNoGo")
 
@@ -592,7 +603,7 @@ func (ss *Sim) NewRun() {
 	ctx.Reset()
 	ctx.Mode = etime.Train
 	ss.Net.InitWeights()
-	ss.ApplyParams() // DCN - Why did Yas remove this?
+	ss.ApplyParams()
 	ss.InitStats()
 	ss.StatCounters()
 	ss.Logs.ResetLog(etime.Train, etime.Epoch)
@@ -648,7 +659,7 @@ func (ss *Sim) NetViewCounters(tm etime.Times) {
 // TrialStats computes the trial-level statistics.
 // Aggregation is done directly from log data.
 func (ss *Sim) TrialStats() {
-	params := fmt.Sprintf("burst: %g, dip: %g", ss.BurstDaGain, ss.DipDaGain)
+	params := fmt.Sprintf("hard: %r, prob: %g, burst: %g, dip: %g", ss.HardFSA, ss.RepeatProb, ss.BurstDaGain, ss.DipDaGain)
 	ss.Stats.SetString("RunName", params)
 
 	out := ss.Net.LayerByName("Output")
@@ -738,7 +749,7 @@ func (ss *Sim) ConfigNetView(nv *netview.NetView) {
 	nv.SceneXYZ().Camera.Pose.Pos.Set(0, 1.85, 2.25)
 	nv.SceneXYZ().Camera.LookAt(math32.Vector3{0, 0, 0}, math32.Vector3{0, 1, 0})
 
-	labs := []string{"  A B C D E F G X Y", " A B C D E F G X Y", " A B C D E F G X Y ", "A B C D E F G X Y", "A B C D E F G X Y  ", "  A B C D E F G X Y  "}
+	labs := []string{"  A B C D E F G H I", " A B C D E F G H I", " A B C D E F G H I ", "A B C D E F G H I", "A B C D E F G H I  ", "  A B C D E F G H I  "}
 	nv.ConfigLabels(labs)
 
 	lays := []string{"Input", "PFCmnt", "PFCmntD", "PFCout", "PFCoutD", "Output"}

@@ -104,8 +104,8 @@ func (ev *FSAEnv) SetHardFSA(h bool) {
 	ev.FSAOuts[2] = 1 // "B"
 	ev.FSAOuts[3] = 6 // "G"
 	ev.FSAOuts[4] = 6 // "G"
-	ev.FSAOuts[7] = 7 // "X"
-	ev.FSAOuts[8] = 8 // "Y"
+	ev.FSAOuts[7] = 7 // "H"
+	ev.FSAOuts[8] = 8 // "I"
 	if ev.FSAHard {
 		ev.FSAOuts[5] = 2 // "C"
 		ev.FSAOuts[6] = 2 // "C"
@@ -166,6 +166,10 @@ func (ev *FSAEnv) Init(run int) {
 	ev.Trial.Cur = -1 // init state -- key so that first Step() = 0
 	// There is no Maint field in FSA, unlike SIR ...
 	// ev.Maint = -1
+	ev.Stim = 7 // the "H" stimulus
+	ev.NextStim = 5 // going to restart at "F"
+	ev.StateNode = 7 // the "H" state
+	ev.NextStateNode = 0 // the "F" state
 }
 
 // SetState sets the input, output states
