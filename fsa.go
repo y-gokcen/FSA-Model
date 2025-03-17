@@ -302,25 +302,20 @@ func (ss *Sim) ConfigEnv() {
 	// Can be called multiple times -- don't re-create
 	var trn, tst *FSAEnv
 	if len(ss.Envs) == 0 {
-		trn = &FSAEnv{}
-		tst = &FSAEnv{}
+		trn = &FSAEnv{Sim: ss} // Assign Sim reference
+		tst = &FSAEnv{Sim: ss}
 	} else {
 		trn = ss.Envs.ByMode(etime.Train).(*FSAEnv)
 		tst = ss.Envs.ByMode(etime.Test).(*FSAEnv)
 	}
 
-	// note: names must be standard here!
 	trn.Name = etime.Train.String()
-	// add two new tokens ...
-	// trn.SetNStim(7)
 	trn.SetNStim(9)
 	trn.RewVal = 1
 	trn.NoRewVal = 0
 	trn.Trial.Max = ss.Config.NTrials
 
 	tst.Name = etime.Test.String()
-	// add two new tokens ...
-	// tst.SetNStim(7)
 	tst.SetNStim(9)
 	tst.RewVal = 1
 	tst.NoRewVal = 0
@@ -329,7 +324,6 @@ func (ss *Sim) ConfigEnv() {
 	trn.Init(0)
 	tst.Init(0)
 
-	// note: names must be in place when adding
 	ss.Envs.Add(trn, tst)
 }
 
@@ -627,17 +621,25 @@ func (ss *Sim) InitStats() {
 	ss.Stats.SetFloat("DA", 0.0)
 	ss.Stats.SetFloat("AbsDA", 0.0)
 	ss.Stats.SetFloat("RewPred", 0.0)
+	ss.Stats.SetFloat("PredValid", 0.0) // Track valid predictions
+	ss.Stats.SetFloat("PredError", 0.0) // Track invalid predictions
+	ss.Stats.SetFloat("PredictedToken", -1.0) // Track last predicted token
 	ss.Stats.SetString("TrialName", "")
-	ss.Logs.InitErrStats() // inits TrlErr, FirstZero, LastZero, NZero
+	ss.Logs.InitErrStats() // Initialize error tracking
 }
 
-// StatCounters saves current counters to Stats, so they are available for logging etc
-// Also saves a string rep of them for ViewUpdate.Text
+
 func (ss *Sim) StatCounters() {
 	ctx := &ss.Context
 	mode := ctx.Mode
 	ss.Loops.Stacks[mode].CountersToStats(&ss.Stats)
-	// always use training epoch..
+
+	// Keep running total of valid/invalid predictions
+	ss.Stats.SetFloat("PredValid", ss.Stats.Float("PredValid"))
+	ss.Stats.SetFloat("PredError", ss.Stats.Float("PredError"))
+	ss.Stats.SetFloat("PredictedToken", ss.Stats.Float("PredictedToken"))
+
+	// always use training epoch
 	trnEpc := ss.Loops.Stacks[etime.Train].Loops[etime.Epoch].Counter.Cur
 	ss.Stats.SetInt("Epoch", trnEpc)
 	trl := ss.Stats.Int("Trial")
@@ -683,6 +685,7 @@ func (ss *Sim) TrialStats() {
 //////////////////////////////////////////////////////////////////////
 // 		Logging
 
+// ConfigLogs sets up logging configuration, including the new prediction log.
 func (ss *Sim) ConfigLogs() {
 	ss.Stats.SetString("RunName", ss.Params.RunName(0)) // used for naming logs, stats, etc
 
@@ -691,7 +694,9 @@ func (ss *Sim) ConfigLogs() {
 	ss.Logs.AddStatStringItem(etime.AllModes, etime.AllTimes, "RunName")
 	ss.Logs.AddStatStringItem(etime.AllModes, etime.Trial, "TrialName")
 
-	ss.Logs.AddPerTrlMSec("PerTrlMSec", etime.Run, etime.Epoch, etime.Trial)
+	ss.Logs.AddStatAggItem("PredValid", etime.Run, etime.Epoch, etime.Trial)
+    	ss.Logs.AddStatAggItem("PredError", etime.Run, etime.Epoch, etime.Trial)
+    	ss.Logs.AddStatAggItem("PredictedToken", etime.Run, etime.Epoch, etime.Trial)
 
 	ss.Logs.AddStatAggItem("SSE", etime.Run, etime.Epoch, etime.Trial)
 	ss.Logs.AddStatAggItem("AvgSSE", etime.Run, etime.Epoch, etime.Trial)
@@ -701,7 +706,7 @@ func (ss *Sim) ConfigLogs() {
 	ss.Logs.AddStatAggItem("AbsDA", etime.Run, etime.Epoch, etime.Trial)
 	ss.Logs.AddStatAggItem("RewPred", etime.Run, etime.Epoch, etime.Trial)
 
-	ss.Logs.PlotItems("PctErr", "AbsDA", "RewPred")
+	ss.Logs.PlotItems("PctErr", "AbsDA", "RewPred", "PredValid") // Add PredValid to plots
 
 	ss.Logs.CreateTables()
 	ss.Logs.SetContext(&ss.Stats, ss.Net)
@@ -712,6 +717,7 @@ func (ss *Sim) ConfigLogs() {
 	ss.Logs.NoPlot(etime.Test, etime.Run)
 	ss.Logs.SetMeta(etime.Train, etime.Run, "LegendCol", "RunName")
 }
+
 
 // Log is the main logging function, handles special things for different scopes
 func (ss *Sim) Log(mode etime.Modes, time etime.Times) {
