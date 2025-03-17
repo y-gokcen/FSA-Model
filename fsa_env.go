@@ -80,6 +80,8 @@ type FSAEnv struct {
 
 	// trial is the step counter within epoch
 	Trial env.Counter `view:"inline"`
+	
+	Sim *Sim
 }
 
 func (ev *FSAEnv) Label() string { return ev.Name }
@@ -219,24 +221,79 @@ func (ev *FSAEnv) SetReward(netout int) bool {
 // 	ev.SetState()
 // }
 
+
+const (
+    PredValid   etime.Modes = iota
+    PredError
+    PredictedToken
+    Run
+)
+
+
+// GetValidNextTokens returns a map of valid tokens for the current FSA state.
+func (ev *FSAEnv) GetValidNextTokens() map[int]bool {
+    validTokens := make(map[int]bool)
+    // Populate validTokens based on the current state
+    for i := 0; i < 9; i++ {  // Assuming 9 states in the FSA
+        if ev.FSATrans[ev.StateNode][i] > 0 {
+            validTokens[i] = true
+        }
+    }
+    return validTokens
+}
+
+// LogPrediction logs the prediction results.
+func (ev *FSAEnv) LogPrediction(predicted int) {
+    if ev.Sim == nil {
+        fmt.Println("Warning: ev.Sim is nil in LogPrediction")
+        return
+    }
+
+    validTokens := ev.GetValidNextTokens()
+    isValid := validTokens[predicted]
+
+    if isValid {
+        ev.Sim.Stats.SetFloat("PredValid", ev.Sim.Stats.Float("PredValid") + 1.0)
+    } else {
+        ev.Sim.Stats.SetFloat("PredError", ev.Sim.Stats.Float("PredError") + 1.0)
+    }
+
+    ev.Sim.Stats.SetFloat("PredictedToken", float64(predicted))
+}
+
+// Define PredictNextToken method
+func (ev *FSAEnv) PredictNextToken() int {
+    // Implement prediction logic based on the current state
+    return ev.Stim  // 
+}
+
+
 // Step the FSA task
 func (ev *FSAEnv) StepFSA() {
-	ev.Stim = ev.NextStim
-	ev.StateNode = ev.NextStateNode
-	// Choose next state ...
-	chosenP := rand.Float32() // in the range [0.0, 1.0)
-	cumulativeP := float32(0.0)
-	for i := 0; i < 9; i++ { // 9 states in the FSA
-		cumulativeP += ev.FSATrans[ev.StateNode][i]
-		if chosenP < cumulativeP {
-			ev.NextStateNode = i
-			break
-		}
-	}
-	// Record next stimulus ...
-	ev.NextStim = ev.FSAOuts[ev.NextStateNode]     
-	ev.SetState()
+    ev.Stim = ev.NextStim
+    ev.StateNode = ev.NextStateNode
+
+    chosenP := rand.Float32() // Select next state
+    cumulativeP := float32(0.0)
+    for i := 0; i < 9; i++ { 
+        cumulativeP += ev.FSATrans[ev.StateNode][i]
+        if chosenP < cumulativeP {
+            ev.NextStateNode = i
+            break
+        }
+    }
+
+    ev.NextStim = ev.FSAOuts[ev.NextStateNode]
+
+    // Get predicted token
+    predicted := ev.PredictNextToken()
+
+    // Log prediction validity
+    ev.LogPrediction(predicted)
+
+    ev.SetState()
 }
+
 
 func (ev *FSAEnv) Step() bool {
 	ev.StepFSA()
