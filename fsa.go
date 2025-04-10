@@ -265,6 +265,8 @@ type Sim struct {
 
 	// a list of random seeds to use for each run
 	RandSeeds randx.Seeds `display:"-"`
+
+	LastPred int // stores the most recent model prediction
 }
 
 // New creates new blank elements and initializes defaults
@@ -581,6 +583,7 @@ func (ss *Sim) ApplyReward(train bool) {
 	// }
 	out := ss.Net.LayerByName("Output")
 	mxi := out.Pools[0].Inhib.Act.MaxIndex
+	ss.LastPred = int(mxi)
 	en.SetReward(int(mxi))
 	pats := en.State("Rew")
 	ly := ss.Net.LayerByName("Rew")
@@ -624,6 +627,7 @@ func (ss *Sim) InitStats() {
 	ss.Stats.SetFloat("PredValid", 0.0) // Track valid predictions
 	ss.Stats.SetFloat("PredError", 0.0) // Track invalid predictions
 	ss.Stats.SetFloat("PredictedToken", -1.0) // Track last predicted token
+	ss.Stats.SetFloat("ValidPct", 0.0)
 	ss.Stats.SetString("TrialName", "")
 	ss.Logs.InitErrStats() // Initialize error tracking
 }
@@ -638,6 +642,7 @@ func (ss *Sim) StatCounters() {
 	ss.Stats.SetFloat("PredValid", ss.Stats.Float("PredValid"))
 	ss.Stats.SetFloat("PredError", ss.Stats.Float("PredError"))
 	ss.Stats.SetFloat("PredictedToken", ss.Stats.Float("PredictedToken"))
+	ss.Stats.SetFloat("ValidPct", ss.Stats.Float("ValidPct"))
 
 	// always use training epoch
 	trnEpc := ss.Loops.Stacks[etime.Train].Loops[etime.Epoch].Counter.Cur
@@ -680,6 +685,8 @@ func (ss *Sim) TrialStats() {
 	ss.Stats.SetFloat32("AbsDA", math32.Abs(snc.Neurons[0].Act))
 	rp := ss.Net.LayerByName("RWPred")
 	ss.Stats.SetFloat32("RewPred", rp.Neurons[0].Act)
+
+
 }
 
 //////////////////////////////////////////////////////////////////////
@@ -694,9 +701,15 @@ func (ss *Sim) ConfigLogs() {
 	ss.Logs.AddStatStringItem(etime.AllModes, etime.AllTimes, "RunName")
 	ss.Logs.AddStatStringItem(etime.AllModes, etime.Trial, "TrialName")
 
+	//ss.Logs.AddStatIntNoAggItem(etime.AllModes, etime.AllTimes, "PredValid")
+	//ss.Logs.AddStatIntNoAggItem(etime.AllModes, etime.AllTimes, "PredError")
+	//ss.Logs.AddStatIntNoAggItem(etime.AllModes, etime.AllTimes, "PredictedToken")
+	//ss.Logs.AddStatIntNoAggItem(etime.AllModes, etime.AllTimes, "ValidPct")
+
 	ss.Logs.AddStatAggItem("PredValid", etime.Run, etime.Epoch, etime.Trial)
     	ss.Logs.AddStatAggItem("PredError", etime.Run, etime.Epoch, etime.Trial)
     	ss.Logs.AddStatAggItem("PredictedToken", etime.Run, etime.Epoch, etime.Trial)
+        ss.Logs.AddStatAggItem("ValidPct", etime.Run, etime.Epoch, etime.Trial)
 
 	ss.Logs.AddStatAggItem("SSE", etime.Run, etime.Epoch, etime.Trial)
 	ss.Logs.AddStatAggItem("AvgSSE", etime.Run, etime.Epoch, etime.Trial)
@@ -706,7 +719,7 @@ func (ss *Sim) ConfigLogs() {
 	ss.Logs.AddStatAggItem("AbsDA", etime.Run, etime.Epoch, etime.Trial)
 	ss.Logs.AddStatAggItem("RewPred", etime.Run, etime.Epoch, etime.Trial)
 
-	ss.Logs.PlotItems("PctErr", "AbsDA", "RewPred", "PredValid") // Add PredValid to plots
+	ss.Logs.PlotItems("PctErr", "AbsDA", "RewPred", "PredValid", "ValidPct") // Add PredValid to plots
 
 	ss.Logs.CreateTables()
 	ss.Logs.SetContext(&ss.Stats, ss.Net)
