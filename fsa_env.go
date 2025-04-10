@@ -11,6 +11,8 @@ import (
 	"cogentcore.org/core/tensor"
 	"github.com/emer/emergent/v2/env"
 	"github.com/emer/emergent/v2/etime"
+
+
 )
 
 // Unlike SIR, there are no actions in FSA ...
@@ -83,6 +85,7 @@ type FSAEnv struct {
 	
 	Sim *Sim
 }
+
 
 func (ev *FSAEnv) Label() string { return ev.Name }
 
@@ -226,6 +229,7 @@ const (
     PredValid   etime.Modes = iota
     PredError
     PredictedToken
+    ValidPct
     Run
 )
 
@@ -233,14 +237,41 @@ const (
 // GetValidNextTokens returns a map of valid tokens for the current FSA state.
 func (ev *FSAEnv) GetValidNextTokens() map[int]bool {
     validTokens := make(map[int]bool)
-    // Populate validTokens based on the current state
-    for i := 0; i < 9; i++ {  // Assuming 9 states in the FSA
+    for i := 0; i < 9; i++ {
         if ev.FSATrans[ev.StateNode][i] > 0 {
-            validTokens[i] = true
+            out := ev.FSAOuts[i]
+            validTokens[out] = true
         }
     }
     return validTokens
 }
+
+
+func ArgMax(vals []float64) int {
+    maxIdx := 0
+    maxVal := vals[0]
+    for i, v := range vals {
+        if v > maxVal {
+            maxVal = v
+            maxIdx = i
+        }
+    }
+    return maxIdx
+}
+
+func ArgMaxFloat32(vals []float32) int {
+	maxIdx := 0
+	maxVal := vals[0]
+	for i, v := range vals {
+		if v > maxVal {
+			maxVal = v
+			maxIdx = i
+		}
+	}
+	return maxIdx
+}
+
+
 
 // LogPrediction logs the prediction results.
 func (ev *FSAEnv) LogPrediction(predicted int) {
@@ -252,30 +283,28 @@ func (ev *FSAEnv) LogPrediction(predicted int) {
     validTokens := ev.GetValidNextTokens()
     isValid := validTokens[predicted]
 
+
     if isValid {
         ev.Sim.Stats.SetFloat("PredValid", ev.Sim.Stats.Float("PredValid") + 1.0)
     } else {
         ev.Sim.Stats.SetFloat("PredError", ev.Sim.Stats.Float("PredError") + 1.0)
     }
+    total := ev.Sim.Stats.Float("PredValid") + ev.Sim.Stats.Float("PredError")
+    if total > 0 {
+    	ev.Sim.Stats.SetFloat("ValidPct", ev.Sim.Stats.Float("PredValid") / total)
+    }
 
     ev.Sim.Stats.SetFloat("PredictedToken", float64(predicted))
 }
 
-// Define PredictNextToken method
-func (ev *FSAEnv) PredictNextToken() int {
-    // Implement prediction logic based on the current state
-    return ev.Stim  // 
-}
-
-
-// Step the FSA task
+// StepFSA method
 func (ev *FSAEnv) StepFSA() {
     ev.Stim = ev.NextStim
     ev.StateNode = ev.NextStateNode
 
-    chosenP := rand.Float32() // Select next state
+    chosenP := rand.Float32()
     cumulativeP := float32(0.0)
-    for i := 0; i < 9; i++ { 
+    for i := 0; i < 9; i++ {
         cumulativeP += ev.FSATrans[ev.StateNode][i]
         if chosenP < cumulativeP {
             ev.NextStateNode = i
@@ -285,10 +314,11 @@ func (ev *FSAEnv) StepFSA() {
 
     ev.NextStim = ev.FSAOuts[ev.NextStateNode]
 
-    // Get predicted token
-    predicted := ev.PredictNextToken()
+    predicted := ev.Sim.LastPred
+    fmt.Printf("Predicted: %d | Actual NextStim: %d | StateNode: %d\n", ev.Sim.LastPred, ev.NextStim, ev.StateNode)
 
-    // Log prediction validity
+
+    // Log the prediction
     ev.LogPrediction(predicted)
 
     ev.SetState()
