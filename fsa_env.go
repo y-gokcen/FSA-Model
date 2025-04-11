@@ -314,12 +314,10 @@ func (ev *FSAEnv) StepFSA() {
 
     ev.NextStim = ev.FSAOuts[ev.NextStateNode]
 
-    predicted := ev.Sim.LastPred
-    fmt.Printf("Predicted: %d | Actual NextStim: %d | StateNode: %d\n", ev.Sim.LastPred, ev.NextStim, ev.StateNode)
-
-
+    //predicted := ev.Sim.LastPred
+    
     // Log the prediction
-    ev.LogPrediction(predicted)
+    //ev.LogPrediction(predicted)
 
     ev.SetState()
 }
