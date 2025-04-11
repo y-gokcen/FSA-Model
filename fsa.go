@@ -494,6 +494,7 @@ func (ss *Sim) ConfigLoops() {
 	plus := cyc.EventByName("MinusPhase:End")
 	plus.OnEvent.InsertBefore("MinusPhase:End", "ApplyReward", func() bool {
 		ss.ApplyReward(true)
+		ss.Envs.ByMode(etime.Train).(*FSAEnv).LogPrediction(ss.LastPred)
 		return true
 	})
 
