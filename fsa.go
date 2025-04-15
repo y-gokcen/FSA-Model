@@ -490,6 +490,12 @@ func (ss *Sim) ConfigLoops() {
 	})
 
 	stack := ls.Stacks[etime.Train]
+	stack.Loops[etime.Epoch].OnStart.Add("ResetEpochPredStats", func() {
+	ss.Stats.SetFloat("EpochValid", 0.0)
+	ss.Stats.SetFloat("EpochError", 0.0)
+	ss.Stats.SetFloat("EpochValidPct", 0.0)
+})
+
 	cyc, _ := stack.Loops[etime.Cycle]
 	plus := cyc.EventByName("MinusPhase:End")
 	plus.OnEvent.InsertBefore("MinusPhase:End", "ApplyReward", func() bool {
@@ -629,6 +635,9 @@ func (ss *Sim) InitStats() {
 	ss.Stats.SetFloat("PredError", 0.0) // Track invalid predictions
 	ss.Stats.SetFloat("PredictedToken", -1.0) // Track last predicted token
 	ss.Stats.SetFloat("ValidPct", 0.0)
+	ss.Stats.SetFloat("EpochValid", 0.0)
+	ss.Stats.SetFloat("EpochError", 0.0)
+	ss.Stats.SetFloat("EpochValidPct", 0.0)
 	ss.Stats.SetString("TrialName", "")
 	ss.Logs.InitErrStats() // Initialize error tracking
 }
@@ -644,6 +653,9 @@ func (ss *Sim) StatCounters() {
 	ss.Stats.SetFloat("PredError", ss.Stats.Float("PredError"))
 	ss.Stats.SetFloat("PredictedToken", ss.Stats.Float("PredictedToken"))
 	ss.Stats.SetFloat("ValidPct", ss.Stats.Float("ValidPct"))
+	ss.Stats.SetFloat("EpochValid", ss.Stats.Float("EpochValid"))
+	ss.Stats.SetFloat("EpochError", ss.Stats.Float("EpochError"))
+	ss.Stats.SetFloat("EpochValidPct", ss.Stats.Float("EpochValidPct"))
 
 	// always use training epoch
 	trnEpc := ss.Loops.Stacks[etime.Train].Loops[etime.Epoch].Counter.Cur
@@ -711,6 +723,9 @@ func (ss *Sim) ConfigLogs() {
     	ss.Logs.AddStatAggItem("PredError", etime.Run, etime.Epoch, etime.Trial)
     	ss.Logs.AddStatAggItem("PredictedToken", etime.Run, etime.Epoch, etime.Trial)
         ss.Logs.AddStatAggItem("ValidPct", etime.Run, etime.Epoch, etime.Trial)
+	ss.Logs.AddStatAggItem("EpochValid", etime.Run, etime.Epoch, etime.Trial)
+	ss.Logs.AddStatAggItem("EpochError", etime.Run, etime.Epoch, etime.Trial)
+	ss.Logs.AddStatAggItem("EpochValidPct", etime.Run, etime.Epoch, etime.Trial)
 
 	ss.Logs.AddStatAggItem("SSE", etime.Run, etime.Epoch, etime.Trial)
 	ss.Logs.AddStatAggItem("AvgSSE", etime.Run, etime.Epoch, etime.Trial)
@@ -720,7 +735,7 @@ func (ss *Sim) ConfigLogs() {
 	ss.Logs.AddStatAggItem("AbsDA", etime.Run, etime.Epoch, etime.Trial)
 	ss.Logs.AddStatAggItem("RewPred", etime.Run, etime.Epoch, etime.Trial)
 
-	ss.Logs.PlotItems("PctErr", "AbsDA", "RewPred", "PredValid", "ValidPct") // Add PredValid to plots
+	ss.Logs.PlotItems("PctErr", "AbsDA", "RewPred", "ValidPct", "EpochValidPct") // Add PredValid to plots
 
 	ss.Logs.CreateTables()
 	ss.Logs.SetContext(&ss.Stats, ss.Net)
