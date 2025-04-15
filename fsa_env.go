@@ -226,12 +226,16 @@ func (ev *FSAEnv) SetReward(netout int) bool {
 
 
 const (
-    PredValid   etime.Modes = iota
-    PredError
-    PredictedToken
-    ValidPct
-    Run
+	PredValid etime.Modes = iota
+	PredError
+	PredictedToken
+	ValidPct
+	EpochValid
+	EpochError
+	EpochValidPct
+	Run
 )
+
 
 
 // GetValidNextTokens returns a map of valid tokens for the current FSA state.
@@ -285,14 +289,23 @@ func (ev *FSAEnv) LogPrediction(predicted int) {
 
 
     if isValid {
-        ev.Sim.Stats.SetFloat("PredValid", ev.Sim.Stats.Float("PredValid") + 1.0)
-    } else {
-        ev.Sim.Stats.SetFloat("PredError", ev.Sim.Stats.Float("PredError") + 1.0)
-    }
+	ev.Sim.Stats.SetFloat("PredValid", ev.Sim.Stats.Float("PredValid") + 1.0)
+	ev.Sim.Stats.SetFloat("EpochValid", ev.Sim.Stats.Float("EpochValid") + 1.0)
+} else {
+	ev.Sim.Stats.SetFloat("PredError", ev.Sim.Stats.Float("PredError") + 1.0)
+	ev.Sim.Stats.SetFloat("EpochError", ev.Sim.Stats.Float("EpochError") + 1.0)
+}
+
     total := ev.Sim.Stats.Float("PredValid") + ev.Sim.Stats.Float("PredError")
-    if total > 0 {
-    	ev.Sim.Stats.SetFloat("ValidPct", ev.Sim.Stats.Float("PredValid") / total)
-    }
+if total > 0 {
+	ev.Sim.Stats.SetFloat("ValidPct", ev.Sim.Stats.Float("PredValid") / total)
+}
+
+epochTotal := ev.Sim.Stats.Float("EpochValid") + ev.Sim.Stats.Float("EpochError")
+if epochTotal > 0 {
+	ev.Sim.Stats.SetFloat("EpochValidPct", ev.Sim.Stats.Float("EpochValid") / epochTotal)
+}
+
 
     ev.Sim.Stats.SetFloat("PredictedToken", float64(predicted))
 }
