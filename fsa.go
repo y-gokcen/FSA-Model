@@ -344,7 +344,7 @@ func (ss *Sim) ConfigNet(net *leabra.Network) {
 	hid := net.AddLayer2D("Hidden", 9, 9, leabra.SuperLayer)
 
 	// args: nY, nMaint, nOut, nNeurBgY, nNeurBgX, nNeurPfcY, nNeurPfcX
-	mtxGo, mtxNoGo, gpe, gpi, cin, pfcMnt, pfcMntD, pfcOut, pfcOutD := net.AddPBWM("", 1, 1, 1, 1, 3, 1, 9)
+	mtxGo, mtxNoGo, gpe, gpi, cin, pfcMnt, pfcMntD, pfcOut, pfcOutD := net.AddPBWM("", 1, 1, 1, 1, 9, 1, 9) //used to be 1111319
 	_ = gpe
 	_ = gpi
 	_ = pfcMnt
