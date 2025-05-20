@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// fsa transforms the sir model of dynamic PFC gating into a model of 
+// fsa transforms the sir model of dynamic PFC gating into a model of
 // serial prediction, with sequences determined by a finite state
 // automata (FSA). The model explores the role of PFC gating in long
 // distance dependencies in sequence prediction.
@@ -199,7 +199,7 @@ type Config struct {
 	NRuns int `default:"10" min:"1"`
 
 	// total number of epochs per run
-	NEpochs int `default:"100"`
+	NEpochs int `default:"1000"`
 
 	// total number of trials per epochs per run
 	NTrials int `default:"100"`
@@ -210,7 +210,6 @@ type Config struct {
 	// how often to run through all the test patterns, in terms of training epochs.
 	// can use 0 or -1 for no testing.
 	TestInterval int `default:"-1"`
-
 }
 
 // Sim encapsulates the entire simulation model, and we define all the
@@ -401,12 +400,41 @@ func (ss *Sim) ConfigNet(net *leabra.Network) {
 
 	ss.ApplyParams()
 	net.InitWeights()
+
+	// Set lower weights for a specific MatrixGo unit (e.g., unit 0)
+	ss.SetUnitWeightsEmer(6, 0.05, "MatrixGo") // unit index 6, set all its incoming weights to 0.05
+	ss.SetUnitWeightsEmer(15, 0.05, "MatrixGo")
+	ss.SetUnitWeightsEmer(6, 0.90, "MatrixNoGo")
+	ss.SetUnitWeightsEmer(15, 0.90, "MatrixNoGo")
+}
+
+// SetMatrixGoUnitWeightsEmer demonstrates using emer.Layer interface to edit MatrixGo unit weights.
+func (ss *Sim) SetUnitWeightsEmer(unitIdx int, wt float32, layerName string) {
+	var ly emer.Layer = ss.Net.LayerByName(layerName)
+	// Type assert to *leabra.Layer to access projections and synapses.
+	lb := ly.(*leabra.Layer)
+	// Use the emer.Layer interface methods to iterate incoming projections.
+	nRecv := lb.NumRecvPaths()
+	for pi := 0; pi < nRecv; pi++ {
+		prj := lb.RecvPath(pi).(*leabra.Path)
+		sy := prj.Syns
+		if sy == nil {
+			continue
+		}
+		nSend := prj.Send.Shape.Len()
+		for sendIdx := 0; sendIdx < nSend; sendIdx++ {
+			syIdx := unitIdx*nSend + sendIdx
+			if syIdx < len(sy) {
+				sy[syIdx].Wt = wt
+			}
+		}
+	}
 }
 
 func (ss *Sim) ApplyParams() {
 	var trn *FSAEnv
 	var tst *FSAEnv
-     
+
 	if ss.Loops != nil {
 		trn := ss.Loops.Stacks[etime.Train]
 		trn.Loops[etime.Run].Counter.Max = ss.Config.NRuns
@@ -420,7 +448,7 @@ func (ss *Sim) ApplyParams() {
 	trn.InitTransProbs(ss.RepeatProb)
 	tst.SetHardFSA(ss.HardFSA)
 	tst.InitTransProbs(ss.RepeatProb)
-	
+
 	matg := ss.Net.LayerByName("MatrixGo")
 	matn := ss.Net.LayerByName("MatrixNoGo")
 
@@ -491,10 +519,10 @@ func (ss *Sim) ConfigLoops() {
 
 	stack := ls.Stacks[etime.Train]
 	stack.Loops[etime.Epoch].OnStart.Add("ResetEpochPredStats", func() {
-	ss.Stats.SetFloat("EpochValid", 0.0)
-	ss.Stats.SetFloat("EpochError", 0.0)
-	ss.Stats.SetFloat("EpochValidPct", 0.0)
-})
+		ss.Stats.SetFloat("EpochValid", 0.0)
+		ss.Stats.SetFloat("EpochError", 0.0)
+		ss.Stats.SetFloat("EpochValidPct", 0.0)
+	})
 
 	cyc, _ := stack.Loops[etime.Cycle]
 	plus := cyc.EventByName("MinusPhase:End")
@@ -631,8 +659,8 @@ func (ss *Sim) InitStats() {
 	ss.Stats.SetFloat("DA", 0.0)
 	ss.Stats.SetFloat("AbsDA", 0.0)
 	ss.Stats.SetFloat("RewPred", 0.0)
-	ss.Stats.SetFloat("PredValid", 0.0) // Track valid predictions
-	ss.Stats.SetFloat("PredError", 0.0) // Track invalid predictions
+	ss.Stats.SetFloat("PredValid", 0.0)       // Track valid predictions
+	ss.Stats.SetFloat("PredError", 0.0)       // Track invalid predictions
 	ss.Stats.SetFloat("PredictedToken", -1.0) // Track last predicted token
 	ss.Stats.SetFloat("ValidPct", 0.0)
 	ss.Stats.SetFloat("EpochValid", 0.0)
@@ -641,7 +669,6 @@ func (ss *Sim) InitStats() {
 	ss.Stats.SetString("TrialName", "")
 	ss.Logs.InitErrStats() // Initialize error tracking
 }
-
 
 func (ss *Sim) StatCounters() {
 	ctx := &ss.Context
@@ -699,7 +726,6 @@ func (ss *Sim) TrialStats() {
 	rp := ss.Net.LayerByName("RWPred")
 	ss.Stats.SetFloat32("RewPred", rp.Neurons[0].Act)
 
-
 }
 
 //////////////////////////////////////////////////////////////////////
@@ -720,9 +746,9 @@ func (ss *Sim) ConfigLogs() {
 	//ss.Logs.AddStatIntNoAggItem(etime.AllModes, etime.AllTimes, "ValidPct")
 
 	ss.Logs.AddStatAggItem("PredValid", etime.Run, etime.Epoch, etime.Trial)
-    	ss.Logs.AddStatAggItem("PredError", etime.Run, etime.Epoch, etime.Trial)
-    	ss.Logs.AddStatAggItem("PredictedToken", etime.Run, etime.Epoch, etime.Trial)
-        ss.Logs.AddStatAggItem("ValidPct", etime.Run, etime.Epoch, etime.Trial)
+	ss.Logs.AddStatAggItem("PredError", etime.Run, etime.Epoch, etime.Trial)
+	ss.Logs.AddStatAggItem("PredictedToken", etime.Run, etime.Epoch, etime.Trial)
+	ss.Logs.AddStatAggItem("ValidPct", etime.Run, etime.Epoch, etime.Trial)
 	ss.Logs.AddStatAggItem("EpochValid", etime.Run, etime.Epoch, etime.Trial)
 	ss.Logs.AddStatAggItem("EpochError", etime.Run, etime.Epoch, etime.Trial)
 	ss.Logs.AddStatAggItem("EpochValidPct", etime.Run, etime.Epoch, etime.Trial)
@@ -746,7 +772,6 @@ func (ss *Sim) ConfigLogs() {
 	ss.Logs.NoPlot(etime.Test, etime.Run)
 	ss.Logs.SetMeta(etime.Train, etime.Run, "LegendCol", "RunName")
 }
-
 
 // Log is the main logging function, handles special things for different scopes
 func (ss *Sim) Log(mode etime.Modes, time etime.Times) {
