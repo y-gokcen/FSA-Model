@@ -11,8 +11,6 @@ import (
 	"cogentcore.org/core/tensor"
 	"github.com/emer/emergent/v2/env"
 	"github.com/emer/emergent/v2/etime"
-
-
 )
 
 // Unlike SIR, there are no actions in FSA ...
@@ -56,11 +54,11 @@ type FSAEnv struct {
 
 	// In FSA, the environment also needs to track what FSA state the
 	// environment is in ...
-	StateNode int
+	StateNode     int
 	NextStateNode int
 
 	// For FSA, specification of the finite state machine ...
-	FSAHard bool
+	FSAHard       bool
 	FSARepeatProb float32
 	// First, transition probabilities ...
 	FSATrans [9][9]float32
@@ -82,10 +80,9 @@ type FSAEnv struct {
 
 	// trial is the step counter within epoch
 	Trial env.Counter `view:"inline"`
-	
+
 	Sim *Sim
 }
-
 
 func (ev *FSAEnv) Label() string { return ev.Name }
 
@@ -144,7 +141,7 @@ func (ev *FSAEnv) State(element string) tensor.Tensor {
 	switch element {
 	case "Input":
 		return &ev.Input
-        // In FSA, there is no control input (action) ...		
+		// In FSA, there is no control input (action) ...
 	// case "CtrlInput":
 	// 	return &ev.CtrlInput
 	case "Output":
@@ -171,9 +168,9 @@ func (ev *FSAEnv) Init(run int) {
 	ev.Trial.Cur = -1 // init state -- key so that first Step() = 0
 	// There is no Maint field in FSA, unlike SIR ...
 	// ev.Maint = -1
-	ev.Stim = 7 // the "H" stimulus
-	ev.NextStim = 5 // going to restart at "F"
-	ev.StateNode = 7 // the "H" state
+	ev.Stim = 7          // the "H" stimulus
+	ev.NextStim = 5      // going to restart at "F"
+	ev.StateNode = 7     // the "H" state
 	ev.NextStateNode = 0 // the "F" state
 }
 
@@ -188,16 +185,21 @@ func (ev *FSAEnv) SetState() {
 	ev.Output.Values[ev.NextStim] = 1
 }
 
-// SetReward sets reward based on network's output
+// SetReward sets reward based on network's output, but only for critical transitions
 func (ev *FSAEnv) SetReward(netout int) bool {
-	cor := ev.NextStim // already correct
-	rw := netout == cor
-	if rw {
+	cor := ev.NextStim
+	isCorrect := netout == cor
+
+	// Critical transition is in the "hard" task, when the current state corresponds
+	// to a "C" output (states 5 or 6), which requires PFC maintenance to resolve.
+	isCriticalTransition := ev.FSAHard && (ev.StateNode == 5 || ev.StateNode == 6)
+
+	if isCorrect && isCriticalTransition {
 		ev.Reward.Values[0] = float64(ev.RewVal)
 	} else {
 		ev.Reward.Values[0] = float64(ev.NoRewVal)
 	}
-	return rw
+	return isCorrect && isCriticalTransition // Return true only if reward was given
 }
 
 // Step the SIR task
@@ -224,7 +226,6 @@ func (ev *FSAEnv) SetReward(netout int) bool {
 // 	ev.SetState()
 // }
 
-
 const (
 	PredValid etime.Modes = iota
 	PredError
@@ -236,31 +237,28 @@ const (
 	Run
 )
 
-
-
 // GetValidNextTokens returns a map of valid tokens for the current FSA state.
 func (ev *FSAEnv) GetValidNextTokens() map[int]bool {
-    validTokens := make(map[int]bool)
-    for i := 0; i < 9; i++ {
-        if ev.FSATrans[ev.StateNode][i] > 0 {
-            out := ev.FSAOuts[i]
-            validTokens[out] = true
-        }
-    }
-    return validTokens
+	validTokens := make(map[int]bool)
+	for i := 0; i < 9; i++ {
+		if ev.FSATrans[ev.StateNode][i] > 0 {
+			out := ev.FSAOuts[i]
+			validTokens[out] = true
+		}
+	}
+	return validTokens
 }
 
-
 func ArgMax(vals []float64) int {
-    maxIdx := 0
-    maxVal := vals[0]
-    for i, v := range vals {
-        if v > maxVal {
-            maxVal = v
-            maxIdx = i
-        }
-    }
-    return maxIdx
+	maxIdx := 0
+	maxVal := vals[0]
+	for i, v := range vals {
+		if v > maxVal {
+			maxVal = v
+			maxIdx = i
+		}
+	}
+	return maxIdx
 }
 
 func ArgMaxFloat32(vals []float32) int {
@@ -275,66 +273,59 @@ func ArgMaxFloat32(vals []float32) int {
 	return maxIdx
 }
 
-
-
 // LogPrediction logs the prediction results.
 func (ev *FSAEnv) LogPrediction(predicted int) {
-    if ev.Sim == nil {
-        fmt.Println("Warning: ev.Sim is nil in LogPrediction")
-        return
-    }
+	if ev.Sim == nil {
+		fmt.Println("Warning: ev.Sim is nil in LogPrediction")
+		return
+	}
 
-    validTokens := ev.GetValidNextTokens()
-    isValid := validTokens[predicted]
+	validTokens := ev.GetValidNextTokens()
+	isValid := validTokens[predicted]
 
+	if isValid {
+		ev.Sim.Stats.SetFloat("PredValid", ev.Sim.Stats.Float("PredValid")+1.0)
+		ev.Sim.Stats.SetFloat("EpochValid", ev.Sim.Stats.Float("EpochValid")+1.0)
+	} else {
+		ev.Sim.Stats.SetFloat("PredError", ev.Sim.Stats.Float("PredError")+1.0)
+		ev.Sim.Stats.SetFloat("EpochError", ev.Sim.Stats.Float("EpochError")+1.0)
+	}
 
-    if isValid {
-	ev.Sim.Stats.SetFloat("PredValid", ev.Sim.Stats.Float("PredValid") + 1.0)
-	ev.Sim.Stats.SetFloat("EpochValid", ev.Sim.Stats.Float("EpochValid") + 1.0)
-} else {
-	ev.Sim.Stats.SetFloat("PredError", ev.Sim.Stats.Float("PredError") + 1.0)
-	ev.Sim.Stats.SetFloat("EpochError", ev.Sim.Stats.Float("EpochError") + 1.0)
-}
+	total := ev.Sim.Stats.Float("PredValid") + ev.Sim.Stats.Float("PredError")
+	if total > 0 {
+		ev.Sim.Stats.SetFloat("ValidPct", ev.Sim.Stats.Float("PredValid")/total)
+	}
 
-    total := ev.Sim.Stats.Float("PredValid") + ev.Sim.Stats.Float("PredError")
-if total > 0 {
-	ev.Sim.Stats.SetFloat("ValidPct", ev.Sim.Stats.Float("PredValid") / total)
-}
+	epochTotal := ev.Sim.Stats.Float("EpochValid") + ev.Sim.Stats.Float("EpochError")
+	if epochTotal > 0 {
+		ev.Sim.Stats.SetFloat("EpochValidPct", ev.Sim.Stats.Float("EpochValid")/epochTotal)
+	}
 
-epochTotal := ev.Sim.Stats.Float("EpochValid") + ev.Sim.Stats.Float("EpochError")
-if epochTotal > 0 {
-	ev.Sim.Stats.SetFloat("EpochValidPct", ev.Sim.Stats.Float("EpochValid") / epochTotal)
-}
-
-
-    ev.Sim.Stats.SetFloat("PredictedToken", float64(predicted))
+	ev.Sim.Stats.SetFloat("PredictedToken", float64(predicted))
 }
 
 // StepFSA method
 func (ev *FSAEnv) StepFSA() {
-    ev.Stim = ev.NextStim
-    ev.StateNode = ev.NextStateNode
+	ev.Stim = ev.NextStim
+	ev.StateNode = ev.NextStateNode
 
-    chosenP := rand.Float32()
-    cumulativeP := float32(0.0)
-    for i := 0; i < 9; i++ {
-        cumulativeP += ev.FSATrans[ev.StateNode][i]
-        if chosenP < cumulativeP {
-            ev.NextStateNode = i
-            break
-        }
-    }
+	chosenP := rand.Float32()
+	cumulativeP := float32(0.0)
+	for i := 0; i < 9; i++ {
+		cumulativeP += ev.FSATrans[ev.StateNode][i]
+		if chosenP < cumulativeP {
+			ev.NextStateNode = i
+			break
+		}
+	}
 
-    ev.NextStim = ev.FSAOuts[ev.NextStateNode]
+	ev.NextStim = ev.FSAOuts[ev.NextStateNode]
 
-    //predicted := ev.Sim.LastPred
-    
-    // Log the prediction
-    //ev.LogPrediction(predicted)
+	// --- Reward logic is now handled in SetReward ---
+	ev.Reward.Values[0] = float64(ev.NoRewVal) // Default to no reward
 
-    ev.SetState()
+	ev.SetState()
 }
-
 
 func (ev *FSAEnv) Step() bool {
 	ev.StepFSA()
