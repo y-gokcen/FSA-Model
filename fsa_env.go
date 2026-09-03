@@ -123,14 +123,43 @@ func (ev *FSAEnv) InitTransProbs(p float32) {
 	ev.FSATrans = [9][9]float32{}
 	ev.FSATrans[0][1] = float32(0.5)
 	ev.FSATrans[0][2] = float32(0.5)
-	ev.FSATrans[1][3] = float32(ev.FSARepeatProb)
+
+	//ev.FSATrans[1][5] = float32(1.0)
+	//ev.FSATrans[2][6] = float32(1.0)
+
+	ev.FSATrans[1][3] = float32(ev.FSARepeatProb) // G prob
 	ev.FSATrans[1][5] = float32(1.0 - ev.FSARepeatProb)
 	ev.FSATrans[2][4] = float32(ev.FSARepeatProb)
 	ev.FSATrans[2][6] = float32(1.0 - ev.FSARepeatProb)
+	ev.FSATrans[3][3] = float32(ev.FSARepeatProb)       // G to G
+	ev.FSATrans[3][5] = float32(1.0 - ev.FSARepeatProb) // G to C
+	ev.FSATrans[4][4] = float32(ev.FSARepeatProb)       // G to G
+	ev.FSATrans[4][6] = float32(1.0 - ev.FSARepeatProb) // G to C
+
+	ev.FSATrans[5][7] = float32(1.0)
+	ev.FSATrans[6][8] = float32(1.0)
+	ev.FSATrans[7][0] = float32(1.0)
+	ev.FSATrans[8][0] = float32(1.0)
+}
+
+// InitTransProbsAlwaysG forces at least one G in every sequence.
+// A/B always transition to G first, then G→G at RepeatProb, G→C at 1-RepeatProb.
+func (ev *FSAEnv) InitTransProbsAlwaysG(p float32) {
+	ev.FSARepeatProb = float32(p)
+	ev.FSATrans = [9][9]float32{}
+	ev.FSATrans[0][1] = float32(0.5)
+	ev.FSATrans[0][2] = float32(0.5)
+
+	ev.FSATrans[1][3] = float32(1.0)
+	ev.FSATrans[1][5] = float32(0.0)
+	ev.FSATrans[2][4] = float32(1.0)
+	ev.FSATrans[2][6] = float32(0.0)
+
 	ev.FSATrans[3][3] = float32(ev.FSARepeatProb)
 	ev.FSATrans[3][5] = float32(1.0 - ev.FSARepeatProb)
 	ev.FSATrans[4][4] = float32(ev.FSARepeatProb)
 	ev.FSATrans[4][6] = float32(1.0 - ev.FSARepeatProb)
+
 	ev.FSATrans[5][7] = float32(1.0)
 	ev.FSATrans[6][8] = float32(1.0)
 	ev.FSATrans[7][0] = float32(1.0)
@@ -168,9 +197,9 @@ func (ev *FSAEnv) Init(run int) {
 	ev.Trial.Cur = -1 // init state -- key so that first Step() = 0
 	// There is no Maint field in FSA, unlike SIR ...
 	// ev.Maint = -1
-	ev.Stim = 7          // the "H" stimulus
+	ev.Stim = 8          // the "H" stimulus
 	ev.NextStim = 5      // going to restart at "F"
-	ev.StateNode = 7     // the "H" state
+	ev.StateNode = 8     // the "H" state
 	ev.NextStateNode = 0 // the "F" state
 }
 
@@ -186,6 +215,18 @@ func (ev *FSAEnv) SetState() {
 }
 
 // SetReward sets reward based on network's output, but only for critical transitions
+//func (ev *FSAEnv) SetReward(netout int) bool {
+//cor := ev.NextStim // already correct
+
+//rw := netout == cor
+//if rw {
+//	ev.Reward.Values[0] = float64(ev.RewVal)
+//} else {
+//	ev.Reward.Values[0] = float64(ev.NoRewVal)
+//}
+//return rw
+//}
+
 func (ev *FSAEnv) SetReward(netout int) bool {
 	cor := ev.NextStim
 	isCorrect := netout == cor
