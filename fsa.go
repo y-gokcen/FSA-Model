@@ -44,18 +44,21 @@ import (
 
 func main() {
 	var (
-		nogui       = flag.Bool("nogui", false, "run without GUI")
-		hard        = flag.Bool("hard", false, "use hard FSA task")
-		repeatProb  = flag.Float64("prob", 0.5, "repeat probability (0.0-1.0)")
-		runs        = flag.Int("runs", 10, "number of runs")
-		epochs      = flag.Int("epochs", 1000, "epochs per run")
-		csvFile     = flag.String("csv", "", "CSV output file (default: auto-generated)")
-		testOnly    = flag.Bool("test-only", false, "skip training, only test with loaded weights")
-		weightsFile = flag.String("weights", "", "weights file to load for test-only mode")
-		testTrials  = flag.Int("test-trials", 10000, "number of test trials")
+		nogui         = flag.Bool("nogui", false, "run without GUI")
+		hard          = flag.Bool("hard", false, "use hard FSA task")
+		repeatProb    = flag.Float64("prob", 0.5, "repeat probability (0.0-1.0)")
+		runs          = flag.Int("runs", 10, "number of runs")
+		epochs        = flag.Int("epochs", 1000, "epochs per run")
+		csvFile       = flag.String("csv", "", "CSV output file (default: auto-generated)")
+		testOnly      = flag.Bool("test-only", false, "skip training, only test with loaded weights")
+		weightsFile   = flag.String("weights", "", "weights file to load for test-only mode")
+		testTrials    = flag.Int("test-trials", 10000, "number of test trials")
 		runNum        = flag.Int("run", 0, "run number for test-only mode")
 		recurrent     = flag.Bool("recurrent", false, "add learnable recurrent Hidden->Hidden connection")
 		lesionPFCoutD = flag.Bool("lesion-pfcoutd", false, "lesion PFCoutD neurons via Off flag")
+		trainCond     = flag.String("condition", "base", "training condition: base, noG, alwaysG")
+		curriculum    = flag.Bool("curriculum", false, "noG->base curriculum: train with no G (zero delay) first, then switch to base")
+		currSwitch    = flag.Int("curriculum-switch", 0, "epoch to switch noG->base; 0 = NEpochs/2")
 	)
 	flag.Parse()
 
@@ -63,10 +66,13 @@ func main() {
 	sim.New()
 
 	// Apply command-line parameters
-	sim.HardFSA      = *hard
-	sim.RepeatProb    = float32(*repeatProb)
-	sim.Recurrent     = *recurrent
+	sim.HardFSA = *hard
+	sim.RepeatProb = float32(*repeatProb)
+	sim.Recurrent = *recurrent
 	sim.LesionPFCoutD = *lesionPFCoutD
+	sim.TrainCondition = *trainCond
+	sim.Curriculum = *curriculum
+	sim.CurriculumSwitch = *currSwitch
 	sim.Config.NRuns = *runs
 	sim.Config.NEpochs = *epochs
 	sim.Config.WeightsFile = *weightsFile
@@ -136,8 +142,8 @@ func (ss *Sim) RunTestOnly(runNum int, numTrials int) {
 	if ss.HardFSA {
 		task = "hard"
 	}
-	testFilename := fmt.Sprintf("fsa_%s_p%.2f_run%02d_test_10k.csv",
-		task, ss.RepeatProb, runNum+1)
+	testFilename := fmt.Sprintf("fsa_%s_%s_p%.2f_run%02d_test_10k.csv",
+		task, ss.ConditionString(), ss.RepeatProb, runNum+1)
 
 	fmt.Printf("Output file: %s\n", testFilename)
 
@@ -168,7 +174,7 @@ func (ss *Sim) RunTestOnly(runNum int, numTrials int) {
 // RunNoGUI runs the simulation without GUI for batch processing
 func (ss *Sim) RunNoGUI() {
 	fmt.Println("=================================================================")
-	fmt.Printf("Starting headless run: Hard=%v, RepeatProb=%.2f\n", ss.HardFSA, ss.RepeatProb)
+	fmt.Printf("Starting headless run: Hard=%v, RepeatProb=%.2f, Condition=%s\n", ss.HardFSA, ss.RepeatProb, ss.TrainCondition)
 	fmt.Printf("Config: %d runs × %d epochs × %d trials\n",
 		ss.Config.NRuns, ss.Config.NEpochs, ss.Config.NTrials)
 	fmt.Println("=================================================================")
@@ -230,8 +236,8 @@ func (ss *Sim) TestAfterRun() {
 	}
 
 	// CRITICAL: Use run%02d format for zero-padding
-	testFilename := fmt.Sprintf("fsa_%s_p%.2f_run%02d_test.csv",
-		task, ss.RepeatProb, currentRun+1)
+	testFilename := fmt.Sprintf("fsa_%s_%s_p%.2f_run%02d_test.csv",
+		task, ss.ConditionString(), ss.RepeatProb, currentRun+1)
 
 	fmt.Printf("  Test file: %s\n", testFilename)
 
@@ -270,8 +276,8 @@ func (ss *Sim) SaveFinalWeights() {
 		task = "hard"
 	}
 
-	filename := fmt.Sprintf("fsa_wts_%s_p%.2f_final.wts.json",
-		task, ss.RepeatProb)
+	filename := fmt.Sprintf("fsa_wts_%s_%s_p%.2f_final.wts.json",
+		task, ss.ConditionString(), ss.RepeatProb)
 
 	err := ss.Net.SaveWeightsJSON(core.Filename(filename))
 	if err != nil {
@@ -282,20 +288,28 @@ func (ss *Sim) SaveFinalWeights() {
 }
 
 // SaveRunWeights saves weights after each individual run
+// ConditionString returns the full condition label for filenames.
+func (ss *Sim) ConditionString() string {
+	cond := ss.TrainCondition
+	if ss.Curriculum {
+		cond = "curric" // noG->base; distinct filenames from plain base runs
+	}
+	if ss.Recurrent {
+		cond += "_recurrent"
+	}
+	if ss.LesionPFCoutD {
+		cond += "_lesion"
+	}
+	return cond
+}
+
 func (ss *Sim) SaveRunWeights(run int) {
 	task := "easy"
 	if ss.HardFSA {
 		task = "hard"
 	}
 
-	condition := "base"
-	if ss.Recurrent && !ss.LesionPFCoutD {
-		condition = "recurrent"
-	} else if ss.Recurrent && ss.LesionPFCoutD {
-		condition = "recurrent_lesion"
-	} else if !ss.Recurrent && ss.LesionPFCoutD {
-		condition = "base_lesion"
-	}
+	condition := ss.ConditionString()
 	filename := fmt.Sprintf("fsa_wts_%s_%s_p%.2f_run%02d.wts.json",
 		task, condition, ss.RepeatProb, run)
 
@@ -373,17 +387,20 @@ var ParamSets = params.Sets{
 			}},
 		{Sel: ".MatrixPath", Desc: "Matrix learning",
 			Params: params.Params{
-				"Path.Learn.Lrate":         "0.04", // .04 > .1
-				"Path.WtInit.Var":          "0.1",
-				"Path.Trace.GateNoGoPosLR": "1",    // 0.1 default
-				"Path.Trace.NotGatedLR":    "0.7",  // 0.7 default
-				"Path.Trace.Decay":         "1.0",  // 1.0 default
+				// Matched to SIR. With biases removed (see ConfigNet), the policy is learned
+				// from random init exactly as in SIR. WtInit.Var=0.1 random init is the
+				// symmetry-breaker that lets the maint vs out stripes specialize.
+				"Path.Learn.Lrate":         "0.04", // SIR value
+				"Path.WtInit.Var":          "0.1",  // random init -- breaks stripe symmetry
+				"Path.Trace.GateNoGoPosLR": "1.0",  // SIR value -- "single most important learning parameter" per lib docs
+				"Path.Trace.NotGatedLR":    "0.7",  // SIR value
+				"Path.Trace.Decay":         "1.0",  // SIR value
 				"Path.Trace.AChDecay":      "0.0",  // not useful even at .1, surprising..
 				"Path.Trace.Deriv":         "true", // true default, better than false
 			}},
 		{Sel: ".MatrixLayer", Desc: "exploring these options",
 			Params: params.Params{
-				"Layer.Act.XX1.Gain":       "100",
+				"Layer.Act.XX1.Gain":       "20", // at Gain=20: Wt=0.90→Act≈0.947, Wt=0.10→Act≈0.667 (28% gap — needed for reliable gating)
 				"Layer.Inhib.Layer.Gi":     "1.9",
 				"Layer.Inhib.Layer.FB":     "0.5",
 				"Layer.Inhib.Pool.On":      "true",
@@ -498,6 +515,13 @@ type Sim struct {
 	// the FSA generated sequence
 	RepeatProb float32
 
+	// TrainCondition controls the training environment's G-token distribution.
+	// "base": normal RepeatProb (G appears with probability p after A/B)
+	// "noG": no G tokens during training (sequences are F→A/B→C→H/I)
+	// "alwaysG": every sequence has at least one G (A/B always → G, then G→G at RepeatProb)
+	// Test always uses normal RepeatProb regardless of training condition.
+	TrainCondition string
+
 	// BurstDaGain is the strength of dopamine bursts: 1 default -- reduce for PD OFF, increase for PD ON
 	BurstDaGain float32
 
@@ -541,6 +565,12 @@ type Sim struct {
 	Recurrent     bool // add learnable recurrent Hidden->Hidden connection
 	LesionPFCoutD bool // lesion PFCoutD via LesionNeurons (sets Off flag)
 
+	// Curriculum: when true, train env starts with no G tokens (zero delay) so the
+	// store/release/readout loop can form, then switches to base (with G's) at
+	// CurriculumSwitch epoch. Test env always uses base RepeatProb.
+	Curriculum       bool
+	CurriculumSwitch int
+
 	// CSV logging state (not displayed in GUI)
 	csvFile          *os.File    `display:"-"`
 	csvWriter        *csv.Writer `display:"-"`
@@ -551,6 +581,11 @@ type Sim struct {
 	csvTestLastRun   int
 	csvTestLastEpoch int
 	csvTestLastTrial int
+
+	// Matrix gating-weight logging: tracks Input->MatrixGo/NoGo weights per epoch
+	// so the learned gating policy can be watched forming/eroding over training.
+	mtxWtsFile   *os.File    `display:"-"`
+	mtxWtsWriter *csv.Writer `display:"-"`
 
 	// last CSV write coordinates to avoid duplicate rows per trial
 	csvLastRun   int `display:"-"`
@@ -578,6 +613,7 @@ func (ss *Sim) Defaults() {
 	ss.DipDaGain = 1
 	ss.HardFSA = false
 	ss.RepeatProb = 0.5
+	ss.TrainCondition = "base"
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -635,7 +671,11 @@ func (ss *Sim) ConfigNet(net *leabra.Network) {
 	hid := net.AddLayer2D("Hidden", 9, 9, leabra.SuperLayer)
 
 	// args: nY, nMaint, nOut, nNeurBgY, nNeurBgX, nNeurPfcY, nNeurPfcX
-	mtxGo, mtxNoGo, gpe, gpi, cin, pfcMnt, pfcMntD, pfcOut, pfcOutD := net.AddPBWM("", 1, 1, 1, 1, 9, 1, 9) //used to be 1111319
+	// args: nY, nMaint, nOut, nNeurBgY, nNeurBgX, nNeurPfcY, nNeurPfcX
+	// nNeurBgX=3: BG makes a binary gate/no-gate decision — 3 neurons matches
+	//   SIR's 1/3 pool proportion so each gating signal can swing the Go/NoGo balance.
+	// nNeurPfcX=9: PFC needs 9 neurons for 9-token content representation.
+	mtxGo, mtxNoGo, gpe, gpi, cin, pfcMnt, pfcMntD, pfcOut, pfcOutD := net.AddPBWM("", 1, 2, 1, 1, 9, 1, 9)
 	_ = gpe
 	_ = gpi
 	_ = pfcMnt
@@ -659,7 +699,9 @@ func (ss *Sim) ConfigNet(net *leabra.Network) {
 	fmin.Scale.Set(1, 1)
 	fmin.Wrap = true
 
-	// net.ConnectLayers(ctrl, rp, full, leabra.RWPath)
+	// In SIR, ctrl drives RWPred so DA reflects prediction errors, not raw reward.
+	// Without this, RWPred stays near 0 and DA ≈ raw reward — uninformative for BG learning.
+	net.ConnectLayers(inp, rp, full, leabra.RWPath)
 	net.ConnectLayers(pfcMntD, rp, full, leabra.RWPath)
 	net.ConnectLayers(pfcOutD, rp, full, leabra.RWPath)
 
@@ -669,13 +711,21 @@ func (ss *Sim) ConfigNet(net *leabra.Network) {
 	// the striatum layers. Let's try driving them from input ...
 	// net.ConnectLayers(ctrl, mtxGo, fmin, leabra.MatrixPath)
 	// net.ConnectLayers(ctrl, mtxNoGo, fmin, leabra.MatrixPath)
+	// Full connectivity from Input to Matrix: with nNeurBgX=3 (vs 9 inputs),
+	// fmin would skip most tokens due to topographic mapping. Full lets all
+	// 3 BG neurons see all 9 inputs, so biases control which tokens gate.
 	net.ConnectLayers(inp, mtxGo, fmin, leabra.MatrixPath)
 	net.ConnectLayers(inp, mtxNoGo, fmin, leabra.MatrixPath)
 	pt := net.ConnectLayers(inp, pfcMnt, fmin, leabra.ForwardPath)
 	pt.AddClass("PFCFixed")
 
+	// PFCmntD → Matrix: gives BG context about what's currently in WM.
+	// net.ConnectLayers(pfcMntD, mtxGo, full, leabra.MatrixPath) // disabled: 9 random synapses swamp 1 biased Input synapse
+	// net.ConnectLayers(pfcMntD, mtxNoGo, full, leabra.MatrixPath)
+
 	net.ConnectLayers(inp, hid, full, leabra.ForwardPath)
-	net.BidirConnectLayers(hid, out, full)
+	net.ConnectLayers(hid, out, full, leabra.ForwardPath)
+	//net.BidirConnectLayers(hid, out, full)
 	// Add recurrent Hidden->Hidden connection if flag set
 	if ss.Recurrent {
 		net.ConnectLayers(hid, hid, full, leabra.ForwardPath)
@@ -694,42 +744,103 @@ func (ss *Sim) ConfigNet(net *leabra.Network) {
 	da.AddAllSendToBut() // send dopamine to all layers..
 	gpi.SendPBWMParams()
 
-	ss.ApplyParams()
+	ss.ApplyParams() // must come before InitWeights: sets WtInit params for BG/PFC fixed paths
 	net.InitWeights()
-
-	// Set lower weights for a specific MatrixGo unit (e.g., unit 0)
-	ss.SetUnitWeightsEmer(6, 0.05, "MatrixGo")  // Stripe 0, Token G
-	ss.SetUnitWeightsEmer(15, 0.05, "MatrixGo") // Stripe 1, Token G
-	ss.SetUnitWeightsEmer(6, 0.90, "MatrixNoGo")
-	ss.SetUnitWeightsEmer(15, 0.90, "MatrixNoGo")
-
-	// NEW: Help A in both stripes equally
-	ss.SetUnitWeightsEmer(0, 0.80, "MatrixGo") // Stripe 0, Token A
-	ss.SetUnitWeightsEmer(9, 0.80, "MatrixGo") // Stripe 1, Token A
-
-	// NEW: Help B in both stripes equally
-	ss.SetUnitWeightsEmer(1, 0.80, "MatrixGo")  // Stripe 0, Token B
-	ss.SetUnitWeightsEmer(10, 0.80, "MatrixGo") // Stripe 1, Token B
+	// NOTE: No ApplyMatrixBiases here. Like SIR, the Input->Matrix policy is learned
+	// from random init (WtInit.Var=0.1). Hand-set biases overwrote that variance with
+	// values identical across stripes, locking the maint and out stripes bit-identical
+	// (verified) so they could never specialize into store-vs-release. Random init is
+	// what breaks that symmetry and lets the stripes diverge.
 }
 
-// SetMatrixGoUnitWeightsEmer demonstrates using emer.Layer interface to edit MatrixGo unit weights.
-func (ss *Sim) SetUnitWeightsEmer(unitIdx int, wt float32, layerName string) {
-	var ly emer.Layer = ss.Net.LayerByName(layerName)
-	// Type assert to *leabra.Layer to access projections and synapses.
-	lb := ly.(*leabra.Layer)
-	// Use the emer.Layer interface methods to iterate incoming projections.
-	nRecv := lb.NumRecvPaths()
-	for pi := 0; pi < nRecv; pi++ {
-		prj := lb.RecvPath(pi).(*leabra.Path)
-		sy := prj.Syns
-		if sy == nil {
+// setPathBiasesBySender sets Wt and LWt on a path for specific sender (Input token) indices.
+// Uses the path's sparse index tables (RConN/RConIndexSt/RConIndex/RSynIndex) so it works
+// correctly regardless of connectivity pattern (one-to-one, full, etc.).
+// bias maps Input token index → desired weight. Only synapses whose sender is in the map
+// are touched; all others keep their current values.
+func setPathBiasesBySender(prj *leabra.Path, bias map[int]float32) {
+	rn := prj.Recv.Shape.Len()
+	for ri := 0; ri < rn; ri++ {
+		nc := int(prj.RConN[ri])
+		st := int(prj.RConIndexSt[ri])
+		for ci := 0; ci < nc; ci++ {
+			si := int(prj.RConIndex[st+ci])
+			wt, ok := bias[si]
+			if !ok {
+				continue
+			}
+			rsi := prj.RSynIndex[st+ci]
+			sy := &prj.Syns[rsi]
+			sy.Wt = wt
+			sy.LWt = wt // MatrixPath has WtSig.Gain=1 so Wt==LWt; both must match or
+			// WtFromDWt recomputes Wt from LWt on the first learning step, wiping the bias
+		}
+	}
+}
+
+// setPathBiasesByRecvSender sets Wt and LWt for specific (recv unit, sender unit) pairs.
+// bias maps recv unit index → (sender unit index → desired weight).
+// Only entries present in the map are touched; all others keep their current values.
+// Use this instead of setPathBiasesBySender when different receiver units (e.g.
+// MatrixGo stripe-0 vs stripe-1) need different weights for the same sender.
+func setPathBiasesByRecvSender(prj *leabra.Path, bias map[int]map[int]float32) {
+	rn := prj.Recv.Shape.Len()
+	for ri := 0; ri < rn; ri++ {
+		senderBias, ok := bias[ri]
+		if !ok {
 			continue
 		}
-		nSend := prj.Send.Shape.Len()
-		for sendIdx := 0; sendIdx < nSend; sendIdx++ {
-			syIdx := unitIdx*nSend + sendIdx
-			if syIdx < len(sy) {
-				sy[syIdx].Wt = wt
+		nc := int(prj.RConN[ri])
+		st := int(prj.RConIndexSt[ri])
+		for ci := 0; ci < nc; ci++ {
+			si := int(prj.RConIndex[st+ci])
+			wt, ok := senderBias[si]
+			if !ok {
+				continue
+			}
+			rsi := prj.RSynIndex[st+ci]
+			sy := &prj.Syns[rsi]
+			sy.Wt = wt
+			sy.LWt = wt // both must match; WtFromDWt recomputes Wt from LWt on first learning step
+		}
+	}
+}
+
+// PrintMatrixBiasWeights prints Wt and LWt for all token connections in
+// MatrixGo and MatrixNoGo, using correct sparse path indexing.
+func (ss *Sim) PrintMatrixBiasWeights() {
+	tokenNames := map[int]string{0: "A", 1: "B", 2: "C", 3: "D", 4: "E", 5: "F", 6: "G", 7: "H", 8: "I"}
+	stripeNames := func(ri int) string {
+		if ri < 9 { // nNeurBgX=9: stripe 0 = recv[0-8], stripe 1 = recv[9-17]
+			return fmt.Sprintf("maint[%d]", ri)
+		}
+		return fmt.Sprintf("out[%d]", ri-9)
+	}
+	for _, lnm := range []string{"MatrixGo", "MatrixNoGo"} {
+		lb := ss.Net.LayerByName(lnm)
+		fmt.Printf("\n=== %s ===\n", lnm)
+		for pi := 0; pi < lb.NumRecvPaths(); pi++ {
+			prj := lb.RecvPath(pi).(*leabra.Path)
+			if prj.Send.Name != "Input" {
+				continue
+			}
+			fmt.Printf("  Path from Input:\n")
+			rn := prj.Recv.Shape.Len()
+			for ri := 0; ri < rn; ri++ {
+				nc := int(prj.RConN[ri])
+				st := int(prj.RConIndexSt[ri])
+				stripe := stripeNames(ri)
+				for ci := 0; ci < nc; ci++ {
+					si := int(prj.RConIndex[st+ci])
+					name, ok := tokenNames[si]
+					if !ok {
+						name = fmt.Sprintf("?%d", si)
+					}
+					rsi := prj.RSynIndex[st+ci]
+					sy := prj.Syns[rsi]
+					fmt.Printf("    recv[%d](%s) <- Input[%d](%s): Wt=%.4f LWt=%.4f\n",
+						ri, stripe, si, name, sy.Wt, sy.LWt)
+				}
 			}
 		}
 	}
@@ -749,8 +860,23 @@ func (ss *Sim) ApplyParams() {
 	trn = ss.Envs.ByMode(etime.Train).(*FSAEnv)
 	tst = ss.Envs.ByMode(etime.Test).(*FSAEnv)
 	trn.SetHardFSA(ss.HardFSA)
-	trn.InitTransProbs(ss.RepeatProb)
 	tst.SetHardFSA(ss.HardFSA)
+
+	// Training env: set trans probs based on condition.
+	// Curriculum overrides: phase 1 is always noG (zero delay); the epoch-switch hook
+	// in ConfigLoops switches the train env to base at CurriculumSwitch.
+	switch {
+	case ss.Curriculum:
+		trn.InitTransProbs(0) // phase 1: no G tokens
+	case ss.TrainCondition == "noG":
+		trn.InitTransProbs(0) // no G tokens ever
+	case ss.TrainCondition == "alwaysG":
+		trn.InitTransProbsAlwaysG(ss.RepeatProb) // guaranteed ≥1 G per sequence
+	default: // "base"
+		trn.InitTransProbs(ss.RepeatProb)
+	}
+
+	// Test env: always uses normal RepeatProb
 	tst.InitTransProbs(ss.RepeatProb)
 
 	matg := ss.Net.LayerByName("MatrixGo")
@@ -760,6 +886,54 @@ func (ss *Sim) ApplyParams() {
 	matg.Matrix.DipGain = ss.DipDaGain
 	matn.Matrix.BurstGain = ss.BurstDaGain
 	matn.Matrix.DipGain = ss.DipDaGain
+}
+
+// ApplyMatrixBiases initializes the gating policy with strong biases.
+//
+// With XX1.Gain=20 and 1:1 BgFixed Matrix→GPi wiring, gating is decided
+// per-neuron via: GeRaw = 4 × (goRaw − nogoRaw).
+//
+// At Gain=20: Wt=0.90 → Act≈0.947, Wt=0.10 → Act≈0.667 (28% gap).
+// BgFixed weight=0.8, so GeRaw for A = 4×(0.947−0.667)×0.8 ≈ ±0.90,
+// well clear of GPiGate.Thr=0.2.  Previous biases (0.60/0.30) gave
+// GeRaw≈±0.19, barely above threshold and lost to noise (50-65% gating).
+//
+// Must be called AFTER net.InitWeights.
+func (ss *Sim) ApplyMatrixBiases() {
+	applyToPath := func(layName string, bias map[int]float32) {
+		lb := ss.Net.LayerByName(layName)
+		for pi := 0; pi < lb.NumRecvPaths(); pi++ {
+			prj := lb.RecvPath(pi).(*leabra.Path)
+			if prj.Send.Name == "Input" {
+				setPathBiasesBySender(prj, bias)
+			}
+		}
+	}
+
+	// Token indices: 0=A, 1=B, 2=C, 3=D, 4=E, 5=F, 6=G, 7=H, 8=I
+	// Strong biases: A and B should gate (Go wins decisively); all others should not.
+	applyToPath("MatrixGo", map[int]float32{
+		0: 0.90, // A: strong Go
+		1: 0.90, // B: strong Go
+		2: 0.10, // C: strong NoGo dominates
+		3: 0.10, // D
+		4: 0.10, // E
+		5: 0.10, // F
+		6: 0.10, // G: must not gate — protects PFC maintenance
+		7: 0.10, // H
+		8: 0.10, // I
+	})
+	applyToPath("MatrixNoGo", map[int]float32{
+		0: 0.10, // A: weak NoGo — allow gating
+		1: 0.10, // B: weak NoGo — allow gating
+		2: 0.90, // C: strong NoGo
+		3: 0.90, // D
+		4: 0.90, // E
+		5: 0.90, // F
+		6: 0.90, // G: strong NoGo — suppress gating
+		7: 0.90, // H
+		8: 0.90, // I
+	})
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -816,19 +990,17 @@ func (ss *Sim) ConfigLoops() {
 				if strings.Contains(ly.Name, "PFC") {
 					continue
 				}
-				// Don't clear BG/thalamus layers (gating mechanism)
-				if strings.Contains(ly.Name, "Matrix") ||
-					strings.Contains(ly.Name, "GP") ||
-					strings.Contains(ly.Name, "SNc") ||
-					ly.Name == "RWPred" {
-					continue
+				// Only clear layers that get new patterns each trial.
+				// PFC must maintain across trials (that's the whole point of PBWM).
+				// BG/thalamus/RWPred maintain their own state.
+				// SIR model has no InitActs clearing at all.
+				if ly.Name == "Input" || ly.Name == "Output" {
+					ly.InitActs()
 				}
-				// Don't clear Hidden in recurrent mode — needs cross-trial memory
-				if ss.Recurrent && ly.Name == "Hidden" {
-					continue
+				// Clear Hidden unless recurrent mode needs cross-trial memory
+				if ly.Name == "Hidden" && !ss.Recurrent {
+					ly.InitActs()
 				}
-				// Clear Hidden, Input, Output
-				ly.InitActs()
 			}
 
 			ss.ApplyInputs()
@@ -929,6 +1101,31 @@ func (ss *Sim) ConfigLoops() {
 		ss.Logs.RunStats("PctCor", "FirstZero", "LastZero")
 	})
 
+	// Log Input->Matrix gating weights at the end of every training epoch so we can
+	// watch the learned policy form or regress to uniform (~0.5) over training.
+	ls.Loop(etime.Train, etime.Epoch).OnEnd.Add("LogMatrixWts", func() {
+		run := ss.Loops.Loop(etime.Train, etime.Run).Counter.Cur
+		epc := ss.Loops.Loop(etime.Train, etime.Epoch).Counter.Cur
+		ss.LogMatrixWeights(run, epc)
+	})
+
+	// Curriculum: switch the train env from noG (phase 1) to base (phase 2) partway
+	// through, without resetting weights, so the policy learned at zero delay carries over.
+	ls.Loop(etime.Train, etime.Epoch).OnStart.Add("CurriculumSwitch", func() {
+		if !ss.Curriculum {
+			return
+		}
+		sw := ss.CurriculumSwitch
+		if sw <= 0 {
+			sw = ss.Config.NEpochs / 2
+		}
+		if ss.Loops.Loop(etime.Train, etime.Epoch).Counter.Cur == sw {
+			trn := ss.Envs.ByMode(etime.Train).(*FSAEnv)
+			trn.InitTransProbs(ss.RepeatProb) // phase 2: base (with G's)
+			fmt.Printf("[Curriculum] epoch %d: train env noG -> base (p=%.2f)\n", sw, ss.RepeatProb)
+		}
+	})
+
 	////////////////////////////////////////////
 	// GUI
 
@@ -1001,6 +1198,18 @@ func (ss *Sim) NewRun() {
 	ctx.Mode = etime.Train
 	ss.Net.InitWeights()
 	ss.ApplyParams()
+	// No ApplyMatrixBiases: gating policy is learned from random init (see ConfigNet).
+	if currentRun == 0 {
+		fmt.Println("=== Matrix weights after run 0 InitWeights (random init, no biases) ===")
+		ss.PrintMatrixBiasWeights()
+		fmt.Println("=== MatrixGo recv paths ===")
+		mg := ss.Net.LayerByName("MatrixGo")
+		for pi := 0; pi < mg.NumRecvPaths(); pi++ {
+			prj := mg.RecvPath(pi).(*leabra.Path)
+			fmt.Printf("  [%d] %s → %s (class: %s)\n",
+				pi, prj.Send.Name, prj.Recv.Name, prj.Class)
+		}
+	}
 	// Apply functional lesion: sets Off flag on all neurons in target layer
 	if ss.LesionPFCoutD {
 		ly := ss.Net.LayerByName("PFCoutD")
@@ -1020,18 +1229,18 @@ func (ss *Sim) NewRun() {
 	if ss.HardFSA {
 		task = "hard"
 	}
-	condition := "base"
-	if ss.Recurrent && !ss.LesionPFCoutD {
-		condition = "recurrent"
-	} else if ss.Recurrent && ss.LesionPFCoutD {
-		condition = "recurrent_lesion"
-	} else if !ss.Recurrent && ss.LesionPFCoutD {
-		condition = "base_lesion"
-	}
+	condition := ss.ConditionString()
 	ss.Config.CSVFile = fmt.Sprintf("fsa_%s_%s_p%.2f_run%02d.csv",
 		task, condition, ss.RepeatProb, currentRun+1)
 
 	ss.InitCSV() // open this run's CSV
+
+	// Open per-run matrix-weight log and snapshot the initial (pre-training) policy.
+	// Epoch=-1 row = the ApplyMatrixBiases starting point, before any learning.
+	mtxFn := fmt.Sprintf("fsa_%s_%s_p%.2f_run%02d_mtxwts.csv",
+		task, condition, ss.RepeatProb, currentRun+1)
+	ss.InitMatrixWtsCSV(mtxFn)
+	ss.LogMatrixWeights(currentRun, -1)
 
 	// reset CSV last-write trackers at new run boundary
 	ss.csvLastRun, ss.csvLastEpoch, ss.csvLastTrial = -1, -1, -1
@@ -1062,8 +1271,10 @@ func (ss *Sim) InitStats() {
 	ss.Stats.SetFloat("EpochError", 0.0)
 	ss.Stats.SetFloat("EpochValidPct", 0.0)
 	ss.Stats.SetString("TrialName", "")
-	ss.Stats.SetString("PFCmntToken", "")
-	ss.Stats.SetString("PFCmntDToken", "")
+	ss.Stats.SetString("PFCmntS0", "")
+	ss.Stats.SetString("PFCmntS1", "")
+	ss.Stats.SetString("PFCmntDS0", "")
+	ss.Stats.SetString("PFCmntDS1", "")
 	ss.Stats.SetString("PFCoutDToken", "")
 
 	ss.Logs.InitErrStats() // Initialize error tracking
@@ -1119,42 +1330,31 @@ func (ss *Sim) TrialStats() {
 		ss.Stats.SetFloat("TrlErr", 0)
 	}
 
-	// --- Log PFC maintenance tokens --- //
+	// --- Log PFC maintenance tokens per stripe ---
+	// With nMaint=2, each layer has 2 stripes × 9 neurons = 18 neurons total.
+	// Previous code took argmax over all 18 and returned "" for indices 9-17,
+	// silently hiding content in stripe 1. Now we report each stripe separately.
 	pfcM := ss.Net.LayerByName("PFCmnt")
 	pfcMD := ss.Net.LayerByName("PFCmntD")
+	const stripeSize = 9 // nNeurPfcX
 
-	// Find max activation index from ActM of PFCmnt
-	pfcMIdx := 0
-	maxAct := float32(-1)
-	for i := range pfcM.Neurons {
-		if pfcM.Neurons[i].ActM > maxAct {
-			maxAct = pfcM.Neurons[i].ActM
-			pfcMIdx = i
+	stripeArgmax := func(neurons []leabra.Neuron, stripe int) string {
+		base := stripe * stripeSize
+		maxAct := float32(-1)
+		idx := 0
+		for i := 0; i < stripeSize; i++ {
+			if neurons[base+i].ActM > maxAct {
+				maxAct = neurons[base+i].ActM
+				idx = i
+			}
 		}
+		return string(rune('A' + idx))
 	}
 
-	// Map to token letter A–I
-	if pfcMIdx >= 0 && pfcMIdx < 9 {
-		ss.Stats.SetString("PFCmntToken", string(rune('A'+pfcMIdx)))
-	} else {
-		ss.Stats.SetString("PFCmntToken", "")
-	}
-
-	// --- Do the same for PFCmntD (optional, recommended) ---
-	pfcMDIdx := 0
-	maxActD := float32(-1)
-	for i := range pfcMD.Neurons {
-		if pfcMD.Neurons[i].ActM > maxActD {
-			maxActD = pfcMD.Neurons[i].ActM
-			pfcMDIdx = i
-		}
-	}
-
-	if pfcMDIdx >= 0 && pfcMDIdx < 9 {
-		ss.Stats.SetString("PFCmntDToken", string(rune('A'+pfcMDIdx)))
-	} else {
-		ss.Stats.SetString("PFCmntDToken", "")
-	}
+	ss.Stats.SetString("PFCmntS0", stripeArgmax(pfcM.Neurons, 0))
+	ss.Stats.SetString("PFCmntS1", stripeArgmax(pfcM.Neurons, 1))
+	ss.Stats.SetString("PFCmntDS0", stripeArgmax(pfcMD.Neurons, 0))
+	ss.Stats.SetString("PFCmntDS1", stripeArgmax(pfcMD.Neurons, 1))
 
 	// --- Log PFCoutD token ---
 	pfcOutD := ss.Net.LayerByName("PFCoutD")
@@ -1214,8 +1414,10 @@ func (ss *Sim) ConfigLogs() {
 	ss.Logs.AddStatAggItem("DA", etime.Run, etime.Epoch, etime.Trial)
 	ss.Logs.AddStatAggItem("AbsDA", etime.Run, etime.Epoch, etime.Trial)
 	ss.Logs.AddStatAggItem("RewPred", etime.Run, etime.Epoch, etime.Trial)
-	ss.Logs.AddStatStringItem(etime.Train, etime.Trial, "PFCmntToken")
-	ss.Logs.AddStatStringItem(etime.Train, etime.Trial, "PFCmntDToken")
+	ss.Logs.AddStatStringItem(etime.Train, etime.Trial, "PFCmntS0")
+	ss.Logs.AddStatStringItem(etime.Train, etime.Trial, "PFCmntS1")
+	ss.Logs.AddStatStringItem(etime.Train, etime.Trial, "PFCmntDS0")
+	ss.Logs.AddStatStringItem(etime.Train, etime.Trial, "PFCmntDS1")
 	ss.Logs.AddStatStringItem(etime.Train, etime.Trial, "PFCoutDToken")
 
 	ss.Logs.CreateTables()
@@ -1483,7 +1685,7 @@ func (ss *Sim) writeCSVHeader() {
 	}
 	hdr := []string{"Run", "Epoch", "Trial", "StateNode", "Stim", "NextStim",
 		"Predicted", "Valid", "Reward", "DA", "AbsDA", "RewPred",
-		"ValidPct", "EpochValidPct", "PFCmntToken", "PFCmntDToken", "PFCoutDToken"}
+		"ValidPct", "EpochValidPct", "PFCmntS0", "PFCmntS1", "PFCmntDS0", "PFCmntDS1", "PFCoutDToken"}
 
 	if err := ss.csvWriter.Write(hdr); err == nil {
 		ss.csvWriter.Flush()
@@ -1571,8 +1773,10 @@ func (ss *Sim) LogTrialCSV() {
 		fmt.Sprintf("%.5f", ss.Stats.Float("RewPred")),
 		fmt.Sprintf("%.5f", ss.Stats.Float("ValidPct")),
 		fmt.Sprintf("%.5f", ss.Stats.Float("EpochValidPct")),
-		ss.Stats.String("PFCmntToken"),
-		ss.Stats.String("PFCmntDToken"),
+		ss.Stats.String("PFCmntS0"),
+		ss.Stats.String("PFCmntS1"),
+		ss.Stats.String("PFCmntDS0"),
+		ss.Stats.String("PFCmntDS1"),
 		ss.Stats.String("PFCoutDToken"),
 	}
 
@@ -1629,6 +1833,78 @@ func (ss *Sim) CloseTrainingCSV() {
 		ss.csvWriter = nil
 		ss.csvClosed = true
 	}
+	ss.CloseMatrixWtsCSV()
+}
+
+// ===================== Matrix Weight Logging =====================
+
+// InitMatrixWtsCSV opens a fresh per-run CSV for tracking Input->Matrix gating weights.
+func (ss *Sim) InitMatrixWtsCSV(filename string) {
+	ss.CloseMatrixWtsCSV()
+	f, err := os.Create(filename)
+	if err != nil {
+		fmt.Printf("Matrix wts CSV create error: %v\n", err)
+		return
+	}
+	ss.mtxWtsFile = f
+	ss.mtxWtsWriter = csv.NewWriter(f)
+	ss.mtxWtsWriter.Write([]string{"Run", "Epoch", "Layer", "Stripe", "StripeType", "Token", "Wt"})
+	ss.mtxWtsWriter.Flush()
+}
+
+// LogMatrixWeights writes one row per (layer, stripe, token) of the Input->Matrix
+// weights. Stripe 0/1 are maintenance pools, stripe 2 is the output pool (9 units each,
+// one per token via the 1:1 wrapped Input->Matrix mapping). Lets us watch whether the
+// A/B-gate policy consolidates or regresses to ~0.5 over training.
+func (ss *Sim) LogMatrixWeights(run, epoch int) {
+	if ss.mtxWtsWriter == nil {
+		return
+	}
+	const stripeUnits = 9 // nNeurBgY*nNeurBgX per pool
+	for _, lnm := range []string{"MatrixGo", "MatrixNoGo"} {
+		lb := ss.Net.LayerByName(lnm)
+		if lb == nil {
+			continue
+		}
+		for pi := 0; pi < lb.NumRecvPaths(); pi++ {
+			prj := lb.RecvPath(pi).(*leabra.Path)
+			if prj.Send.Name != "Input" {
+				continue
+			}
+			rn := prj.Recv.Shape.Len()
+			for ri := 0; ri < rn; ri++ {
+				nc := int(prj.RConN[ri])
+				st := int(prj.RConIndexSt[ri])
+				stripe := ri / stripeUnits
+				stripeType := "maint"
+				if stripe >= 2 {
+					stripeType = "out"
+				}
+				for ci := 0; ci < nc; ci++ {
+					si := int(prj.RConIndex[st+ci])
+					rsi := prj.RSynIndex[st+ci]
+					wt := prj.Syns[rsi].Wt
+					ss.mtxWtsWriter.Write([]string{
+						strconv.Itoa(run), strconv.Itoa(epoch), lnm,
+						strconv.Itoa(stripe), stripeType, string(rune('A' + si)),
+						fmt.Sprintf("%.4f", wt),
+					})
+				}
+			}
+		}
+	}
+	ss.mtxWtsWriter.Flush()
+}
+
+func (ss *Sim) CloseMatrixWtsCSV() {
+	if ss.mtxWtsWriter != nil {
+		ss.mtxWtsWriter.Flush()
+		if ss.mtxWtsFile != nil {
+			ss.mtxWtsFile.Close()
+			ss.mtxWtsFile = nil
+		}
+		ss.mtxWtsWriter = nil
+	}
 }
 
 // initTestCSVSimple creates a test CSV file with minimal complexity
@@ -1659,7 +1935,7 @@ func (ss *Sim) initTestCSVSimple() {
 	if fi != nil && fi.Size() == 0 {
 		hdr := []string{"Run", "Epoch", "Trial", "StateNode", "Stim", "NextStim",
 			"Predicted", "Valid", "Reward", "DA", "AbsDA", "RewPred",
-			"ValidPct", "EpochValidPct", "PFCmntToken", "PFCmntDToken", "PFCoutDToken"}
+			"ValidPct", "EpochValidPct", "PFCmntS0", "PFCmntS1", "PFCmntDS0", "PFCmntDS1", "PFCoutDToken"}
 		ss.csvTestWriter.Write(hdr)
 		ss.csvTestWriter.Flush()
 	}
@@ -1687,10 +1963,10 @@ func (ss *Sim) createTestCSVForRun(filename string) {
 	ss.csvTestFile = f
 	ss.csvTestWriter = csv.NewWriter(f)
 
-	// Write header
-	hdr := []string{"Run", "Epoch", "Trial", "Sequence", "StateNode", "Input",
-		"Output", "Target", "Reward",
-		"PFCmntToken", "PFCmntDToken", "PFCoutDToken"}
+	// Write header — must match the 19 fields in LogTrialCSV
+	hdr := []string{"Run", "Epoch", "Trial", "StateNode", "Stim", "NextStim",
+		"Predicted", "Valid", "Reward", "DA", "AbsDA", "RewPred",
+		"ValidPct", "EpochValidPct", "PFCmntS0", "PFCmntS1", "PFCmntDS0", "PFCmntDS1", "PFCoutDToken"}
 
 	if err := ss.csvTestWriter.Write(hdr); err != nil {
 		fmt.Printf("Test CSV header error: %v\n", err)
