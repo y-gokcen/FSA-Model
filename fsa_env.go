@@ -82,6 +82,11 @@ type FSAEnv struct {
 	Trial env.Counter `view:"inline"`
 
 	Sim *Sim
+
+	// Rand is the random source for the FSA transitions. It is seeded per run
+	// by Sim.InitRandSeed so that the token sequence (and hence the whole run)
+	// is reproducible; Go 1.24+ makes seeding the global math/rand source a no-op.
+	Rand *rand.Rand `display:"-"`
 }
 
 func (ev *FSAEnv) Label() string { return ev.Name }
@@ -197,10 +202,27 @@ func (ev *FSAEnv) Init(run int) {
 	ev.Trial.Cur = -1 // init state -- key so that first Step() = 0
 	// There is no Maint field in FSA, unlike SIR ...
 	// ev.Maint = -1
-	ev.Stim = 8          // the "H" stimulus
+	ev.Stim = 8          // the "I" stimulus (end of the B branch)
 	ev.NextStim = 5      // going to restart at "F"
-	ev.StateNode = 8     // the "H" state
+	ev.StateNode = 8     // the "I" state
 	ev.NextStateNode = 0 // the "F" state
+}
+
+// IsCheckedTransition is true on the trials where correctness is scored: the
+// current token is C, D or E (states 5 and 6) and the network must predict H
+// (A branch) or I (B branch). On every other trial the next token is either
+// random (F -> A/B, A/B/G -> G/C) or trivially determined (H/I -> F), so only
+// validity is scored there.
+func (ev *FSAEnv) IsCheckedTransition() bool {
+	return ev.StateNode == 5 || ev.StateNode == 6
+}
+
+// IsCriticalTransition is true when the current state is one where the next
+// token depends on information that must be maintained in PFC: in the hard
+// task, states 5 and 6 both present "C" but lead to "H" (A branch) or "I"
+// (B branch). Reward (and hence dopamine) is only delivered on these trials.
+func (ev *FSAEnv) IsCriticalTransition() bool {
+	return ev.FSAHard && (ev.StateNode == 5 || ev.StateNode == 6)
 }
 
 // SetState sets the input, output states
@@ -233,7 +255,7 @@ func (ev *FSAEnv) SetReward(netout int) bool {
 
 	// Critical transition is in the "hard" task, when the current state corresponds
 	// to a "C" output (states 5 or 6), which requires PFC maintenance to resolve.
-	isCriticalTransition := ev.FSAHard && (ev.StateNode == 5 || ev.StateNode == 6)
+	isCriticalTransition := ev.IsCriticalTransition()
 
 	if isCorrect && isCriticalTransition {
 		ev.Reward.Values[0] = float64(ev.RewVal)
@@ -321,8 +343,13 @@ func (ev *FSAEnv) LogPrediction(predicted int) {
 		return
 	}
 
+	// Valid: the prediction is one of the tokens the FSA can produce next from
+	// its current state; scored on every trial. Correct: the prediction is the
+	// token that actually came next; scored only on the checked transitions
+	// (after C/D/E, predicting H vs I), where a solved model reaches 100%.
 	validTokens := ev.GetValidNextTokens()
 	isValid := validTokens[predicted]
+	isCorrect := predicted == ev.NextStim
 
 	if isValid {
 		ev.Sim.Stats.SetFloat("PredValid", ev.Sim.Stats.Float("PredValid")+1.0)
@@ -330,6 +357,17 @@ func (ev *FSAEnv) LogPrediction(predicted int) {
 	} else {
 		ev.Sim.Stats.SetFloat("PredError", ev.Sim.Stats.Float("PredError")+1.0)
 		ev.Sim.Stats.SetFloat("EpochError", ev.Sim.Stats.Float("EpochError")+1.0)
+	}
+	if ev.IsCheckedTransition() {
+		if isCorrect {
+			ev.Sim.Stats.SetFloat("Correct", 1.0)
+			ev.Sim.Stats.SetFloat("PredCorrect", ev.Sim.Stats.Float("PredCorrect")+1.0)
+			ev.Sim.Stats.SetFloat("EpochCorrect", ev.Sim.Stats.Float("EpochCorrect")+1.0)
+		} else {
+			ev.Sim.Stats.SetFloat("Correct", 0.0)
+			ev.Sim.Stats.SetFloat("PredIncorrect", ev.Sim.Stats.Float("PredIncorrect")+1.0)
+			ev.Sim.Stats.SetFloat("EpochIncorrect", ev.Sim.Stats.Float("EpochIncorrect")+1.0)
+		}
 	}
 
 	total := ev.Sim.Stats.Float("PredValid") + ev.Sim.Stats.Float("PredError")
@@ -342,6 +380,15 @@ func (ev *FSAEnv) LogPrediction(predicted int) {
 		ev.Sim.Stats.SetFloat("EpochValidPct", ev.Sim.Stats.Float("EpochValid")/epochTotal)
 	}
 
+	ctotal := ev.Sim.Stats.Float("PredCorrect") + ev.Sim.Stats.Float("PredIncorrect")
+	if ctotal > 0 {
+		ev.Sim.Stats.SetFloat("CorrectPct", ev.Sim.Stats.Float("PredCorrect")/ctotal)
+	}
+	cepochTotal := ev.Sim.Stats.Float("EpochCorrect") + ev.Sim.Stats.Float("EpochIncorrect")
+	if cepochTotal > 0 {
+		ev.Sim.Stats.SetFloat("EpochCorrectPct", ev.Sim.Stats.Float("EpochCorrect")/cepochTotal)
+	}
+
 	ev.Sim.Stats.SetFloat("PredictedToken", float64(predicted))
 }
 
@@ -350,7 +397,12 @@ func (ev *FSAEnv) StepFSA() {
 	ev.Stim = ev.NextStim
 	ev.StateNode = ev.NextStateNode
 
-	chosenP := rand.Float32()
+	var chosenP float32
+	if ev.Rand != nil {
+		chosenP = ev.Rand.Float32()
+	} else {
+		chosenP = rand.Float32()
+	}
 	cumulativeP := float32(0.0)
 	for i := 0; i < 9; i++ {
 		cumulativeP += ev.FSATrans[ev.StateNode][i]
