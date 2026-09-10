@@ -1,0 +1,14 @@
+# IDE / local notes
+.idea/
+.vscode/
+.DS_Store
+claude/
+
+# build output
+/FSA-Model
+/fsa
+/fsa.exe
+
+# simulation output
+*.csv
+*.wts.json
